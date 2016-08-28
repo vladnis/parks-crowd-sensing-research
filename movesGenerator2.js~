@@ -1,0 +1,372 @@
+/**
+ * Created by vlad on 24.04.2016.
+ */
+
+var MongoClient = require('mongodb').MongoClient;
+var geolib = require('geolib');
+
+var uniquePointsCovered = [];
+var uniquePointsCoveredHash = {};
+
+var radius = 3;
+
+var radiusInDegrees = radius * 0.000009009;
+
+var degreesPerMeter = 0.000009009 * radius * 2; // 6 meters
+
+var numberOfPeople = 1;
+
+
+var availableMoves = [
+    {lat: degreesPerMeter, lng: 0},
+    {lat: -degreesPerMeter, lng: 0},
+    {lat: 0, lng: degreesPerMeter},
+    {lat: 0, lng: -degreesPerMeter}
+];
+
+// ##############
+function pow(x) {
+    return x*x;
+}
+
+function locationOf(element, array, start, end) {
+
+    var pivot = parseInt(start + (end - start) / 2, 10);
+
+    if (end-start <= 1 || array[pivot].lat == element) {
+        return pivot;
+    }
+
+    if (array[pivot].lat < element) {
+        return locationOf(element, array, pivot, end);
+    } else {
+        return locationOf(element, array, start, pivot);
+    }
+
+}
+
+
+function calculateArea(circles, poly) {
+
+    var xmin = null;
+    var xmax = null;
+    var ymin = null;
+    var ymax = null;
+
+    for (var i in circles) {
+        if ((circles[i].lat - radiusInDegrees) < xmin || xmin === null) {
+            xmin = circles[i].lat - radiusInDegrees;
+        }
+        if ((circles[i].lat + radiusInDegrees) > xmax || xmax === null) {
+            xmax = circles[i].lat + radiusInDegrees;
+        }
+        if ((circles[i].lng - radiusInDegrees) < ymin || ymin === null) {
+            ymin = circles[i].lng - radiusInDegrees;
+        }
+        if ((circles[i].y + radiusInDegrees) > ymax || ymax === null) {
+            ymax = circles[i].lng + radiusInDegrees;
+        }
+    }
+
+    circles.sort(function(x,y) {return x.lat - y.lat});
+
+    var box_side = 1500;
+
+    var dx = (xmax - xmin) / box_side;
+    var dy = (ymax - ymin) / box_side;
+
+
+    var count = 0;
+
+    var x, y;
+
+    var num_circles = circles.length;
+
+    console.log('num_circles', num_circles);
+
+    for (var k = 0; k < box_side; k++) {
+
+        if (k % 100 === 0) {
+            console.log('k', k);
+        }
+
+        y = ymin + k * dy;
+        for (var c = 0; c < box_side; c++) {
+
+            x = xmin + c * dx;
+
+            if (!isPointInside({lat:x, lng:y}, poly)) {
+                //console.log("not point inside");
+                continue;
+            }
+
+            var location = locationOf(x, circles, 0, num_circles);
+
+            var intersects = false;
+            for (var down = location; down > 0; down--) {
+                if (Math.abs(x - circles[down].lat) > radiusInDegrees ) {
+                    break;
+                }
+                if ((pow(x-circles[down].lat) + pow(y-circles[down].lng)) <= pow(radiusInDegrees)) {
+                    count += 1;
+                    break;
+                }
+            }
+
+            if (intersects) {
+                break;
+            }
+
+            for (var up = location + 1; up < num_circles; up++) {
+                if (Math.abs(x - circles[up].lat) > radiusInDegrees ) {
+                    break;
+                }
+                if ((pow(x-circles[up].lat) + pow(y-circles[up].lng)) <= pow(radiusInDegrees)) {
+                    count += 1;
+                    break;
+                }
+            }
+
+        }
+    }
+
+    var area = dx * dy * 111000 * 111000;
+
+    console.log('area', area);
+    console.log(count);
+
+    console.log("Approximated area:", count * area);
+}
+
+// ##############
+
+function getRandomInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function getRandomDirection() {
+    return getRandomInt(0, 3);
+}
+
+function  isPointInside(latlng, coords) {
+
+    for(var c = false, i = -1, l = coords.length, j = l - 1; ++i < l; j = i) {
+
+        if(
+            (
+                (coords[i].lng <= latlng.lng && latlng.lng < coords[j].lng) ||
+                (coords[j].lng <= latlng.lng && latlng.lng < coords[i].lng)
+            ) &&
+            (
+                latlng.lat < (coords[j].lat - coords[i].lat) *
+                (latlng.lng - coords[i].lng) /
+                (coords[j].lng - coords[i].lng) +
+                coords[i].lat
+            )
+        ) {
+            c = !c;
+        }
+
+    }
+
+    return c;
+
+}
+
+function moveCircle(circle, polygon, iteration) {
+    // 4 directions
+    var oldCenter = circle.coords;
+
+    while (1) {
+        var newCenter = {
+            lat: oldCenter.lat + availableMoves[circle.direction].lat,
+            lng: oldCenter.lng + availableMoves[circle.direction].lng
+        };
+
+        if (isPointInside(newCenter, polygon)) {
+            break;
+        } else {
+            circle.direction = (circle.direction + getRandomInt(0, 20)) % 4;
+        }
+    }
+
+    var lat = newCenter.lat;
+    var lng = newCenter.lng;
+
+    if (uniquePointsCoveredHash[lat + '/' + lng]) {
+        return;
+    }
+
+    uniquePointsCoveredHash[lat + '/' + lng] = {1:1};
+    uniquePointsCovered.push({
+        lat: lat,
+        lng: lng,
+    });
+
+    circle.coords = newCenter;
+}
+
+function movePeople(circles, iteration, polygon) {
+
+    for (iteration = 0; iteration < 1; iteration++) {
+        if (iteration % 100 === 0) {
+            console.log('iteration', iteration);
+        }
+        for (var key in circles) {
+            moveCircle(circles[key], polygon, iteration);
+        }
+
+    }
+}
+
+
+
+/**
+ * Returns a random integer between min (inclusive) and max (inclusive)
+ * Using Math.round() will give you a non-uniform distribution!
+ */
+function getRandomFloat(min, max) {
+    return Math.random() * (parseFloat(max) - parseFloat(min)) + parseFloat(min);
+}
+
+
+function getRandomPosition(info) {
+    var minLon = info.minLon.lon;
+    var maxLon = info.maxLon.lon;
+    var minLat = info.minLat.lat;
+    var maxLat = info.maxLat.lat;
+
+    var poly = [];
+
+    for (var elemKey in info.coord) {
+        poly.push({
+            latitude: info.coord[elemKey].lat,
+            longitude: info.coord[elemKey].lon
+        });
+    }
+
+    while(1) {
+        var coord = {
+            latitude: getRandomFloat(minLat, maxLat),
+            longitude: getRandomFloat(minLon, maxLon)
+        };
+
+        if (geolib.isPointInside(coord, poly)) {
+            return {
+                lat: coord.latitude,
+                lon: coord.longitude
+            };
+        }
+    }
+}
+
+
+MongoClient.connect('mongodb://localhost:27017/park', function(err, db) {
+    if (err) {
+        console.log(err);
+        return;
+    }
+
+    console.log("Connected to database");
+
+
+    var cursor = db.collection('areas').find({name : 'Parcul Herăstrău'});
+    var points = [];
+
+    cursor.each(function(err, doc) {
+        if (err) {
+            console.log('Error', err);
+            return;
+        }
+        if (doc === null) {
+            console.log("Finished generating points\n");
+
+            for (var areaKey in points) {
+                coordinates = points[areaKey].coord;
+
+                var markers = [];
+
+                for (var coordinateKey in coordinates) {
+
+                    var lat = parseFloat(coordinates[coordinateKey].lat);
+                    var lon = parseFloat(coordinates[coordinateKey].lon);
+
+                    var coord = {
+                        lat: lat,
+                        lng: lon
+                    };
+                    markers.push(coord);
+                }
+
+                var randomPoints = points[areaKey].randomPoints;
+
+                var circles = [];
+                for (var elemKey in randomPoints) {
+                    var coords = {
+                        lat: parseFloat(randomPoints[elemKey].lat),
+                        lng: parseFloat(randomPoints[elemKey].lon)
+                    };
+                    var circle = {};
+                    circle.direction = getRandomDirection();
+                    circle.coords = coords;
+                    circles.push(circle);
+                }
+
+                movePeople(circles, 0, markers);
+
+            }
+
+            calculateArea(uniquePointsCovered, markers);
+
+            return;
+        }
+
+        var minLat = null;
+        var minLon = null;
+        var maxLat = null;
+        var maxLon = null;
+
+        for (var coordKey in doc.coordinates) {
+            var coordinates = doc.coordinates[coordKey];
+
+            if (minLat == null || minLat.lat > coordinates.lat ) {
+                minLat = coordinates;
+            }
+
+            if (maxLat == null || coordinates.lat > maxLat.lat) {
+                maxLat = coordinates;
+            }
+
+            if (minLon == null || minLon.lon > coordinates.lon) {
+                minLon = coordinates;
+            }
+
+            if (maxLon == null || maxLon.lon < coordinates.lon) {
+                maxLon = coordinates;
+            }
+
+        }
+
+        var info = {
+            coord: doc.coordinates,
+            minLon: minLon,
+            maxLon: maxLon,
+            minLat: minLat,
+            maxLat: maxLat
+        };
+
+
+        info.randomPoints = [];
+
+        for (var i = 0; i < numberOfPeople; i++) {
+            if (i % 100 == 0) {
+                console.log('numberOfPeople', i);
+            }
+            info.randomPoints.push(getRandomPosition(info));
+        }
+
+        points.push(info);
+    });
+
+
+});

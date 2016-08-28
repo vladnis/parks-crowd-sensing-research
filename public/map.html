@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+    <meta charset="utf-8">
+    <title>Simple markers</title>
+    <style>
+      html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+      #map {
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+      <script src="jquery.js"></script>
+
+
+  <div id="map"></div>
+    <script>
+
+        var uniquePointsCovered = [];
+        var minusMeters = 0;
+
+        var degreesPerMeter = 0.000009009 * 6; // 6 meters
+        var radius = 3;
+        var area = 28.2743;
+
+        var availableMoves = [
+            {lat: degreesPerMeter, lng: 0},
+            {lat: -degreesPerMeter, lng: 0},
+            {lat: 0, lng: degreesPerMeter},
+            {lat: 0, lng: -degreesPerMeter}
+        ];
+
+        function calculateDistanceBetweenPoints(p1, p2) {
+            var R = 6371000; // metres
+            var φ1 = toRad(p1.lat);
+            var φ2 = toRad(p2.lat);
+            var Δφ = toRad(p2.lat-p1.lat);
+            var Δλ = toRad((p2.lng-p1.lng));
+
+            var a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+                    Math.cos(φ1) * Math.cos(φ2) *
+                    Math.sin(Δλ/2) * Math.sin(Δλ/2);
+
+
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+            return R * c;
+        }
+
+
+        function calculateParkArea(poly, map) {
+            var xmin = null;
+            var xmax = null;
+            var ymin = null;
+            var ymax = null;
+
+            for (var i in poly) {
+                if ((poly[i].lat) < xmin || xmin === null) {
+                    xmin = poly[i].lat;
+                }
+                if ((poly[i].lat) > xmax || xmax === null) {
+                    xmax = poly[i].lat;
+                }
+                if ((poly[i].lng) < ymin || ymin === null) {
+                    ymin = poly[i].lng ;
+                }
+                if ((poly[i].lng) > ymax || ymax === null) {
+                    ymax = poly[i].lng;
+                }
+            }
+
+            var box_side = 1000;
+
+            var dx = (xmax - xmin) / box_side;
+            var dy = (ymax - ymin) / box_side;
+
+            var distance1 = calculateDistanceBetweenPoints({lat: xmin, lng: ymax}, {lat: xmin, lng: ymin});
+            var distance2 = calculateDistanceBetweenPoints({lat: xmax, lng: ymin}, {lat: xmin, lng: ymin});
+
+            var area2 = distance1 * distance2;
+
+
+            var area3 = area2 / (box_side * box_side);
+
+            console.log("area 3", area3);
+
+            var count = 0;
+
+            var count_outside = 0;
+
+            for (var k = 0; k < box_side; k++) {
+
+                if (k % 100 === 0) {
+                    console.log('k', k);
+                }
+
+                y = parseFloat(ymin) + k * parseFloat(dy);
+
+                for (var c = 0; c < box_side; c++) {
+                    x = parseFloat(xmin) + c * parseFloat(dx);
+
+                    if (isPointInside({lat:x, lng:y}, poly)) {
+                        count++;
+
+//                        if (count < 10000) {
+//                            var circle = new google.maps.Circle({
+//                                  strokeColor: '#FFFFFF',
+//                                  strokeOpacity: 0.8,
+//                                  strokeWeight: 2,
+//                                  fillColor: '#FFFFFF',
+//                                  fillOpacity: 0.35,
+//                                  map: map,
+//                                  center: {lat: x, lng: y},
+//                                  radius: area3
+//                              });
+//                            console.log({lat: x, lng: y});
+//                        } else {
+//                            console.log(count);
+//                            return;
+//                        }
+                    }
+//                    else {
+//                        if (k < 500) {
+//                            continue;
+//                        }
+//                        var circle = new google.maps.Circle({
+//                          strokeColor: '#FFFFFF',
+//                          strokeOpacity: 0.8,
+//                          strokeWeight: 2,
+//                          fillColor: '#FFFFFF',
+//                          fillOpacity: 0.35,
+//                          map: map,
+//                          center: {lat: x, lng: y},
+//                          radius: radius
+//                      });
+//                        count_outside++;
+//                        if (count_outside > 2000) {
+//                            return 0;
+//                        }
+//                    }
+                }
+            }
+
+            console.log(count);
+
+            console.log("Approximated area:", count * area3);
+            return count * area3;
+        }
+
+        function toRad(Value) {
+            /** Converts numeric degrees to radians */
+            return Value * Math.PI / 180;
+        }
+
+        function getRandomInt(min, max) {
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        }
+
+        function getRandomDirection() {
+            return getRandomInt(0, 3);
+        }
+
+        function  isPointInside(latlng, coords) {
+
+            for(var c = false, i = -1, l = coords.length, j = l - 1; ++i < l; j = i) {
+
+                if(
+                        (
+                                (coords[i].lng <= latlng.lng && latlng.lng < coords[j].lng) ||
+                                (coords[j].lng <= latlng.lng && latlng.lng < coords[i].lng)
+                        ) &&
+                        (
+                                latlng.lat < (coords[j].lat - coords[i].lat) *
+                                (latlng.lng - coords[i].lng) /
+                                (coords[j].lng - coords[i].lng) +
+                                coords[i].lat
+                        )
+                ) {
+                    c = !c;
+                }
+
+            }
+
+            return c;
+
+        }
+
+        function moveCircle(circle, polygon, iteration) {
+            // 4 directions
+            var oldCenter = circle.coords;
+
+            while (1) {
+                var newCenter = {
+                    lat: oldCenter.lat + availableMoves[circle.direction].lat,
+                    lng: oldCenter.lng + availableMoves[circle.direction].lng
+                };
+
+                if (isPointInside(newCenter, polygon)) {
+                    break;
+                } else {
+                    circle.direction = (circle.direction + getRandomInt(0, 20)) % 4;
+                }
+            }
+
+            uniquePointsCovered.push(newCenter);
+
+            circle.coords = newCenter;
+            if (iteration % 100 === 0) {
+                circle.setCenter(circle.coords);
+            }
+        }
+
+        function movePeople(circles, iteration, polygon) {
+
+            for (iteration = 0; iteration < 900; iteration++) {
+                if (iteration % 100 === 0) {
+                    console.log(iteration);
+                }
+                for (var key in circles) {
+                    moveCircle(circles[key], polygon, iteration);
+                }
+
+            }
+        }
+
+        function initMap() {
+        var myLatLng = {lat: 44.4380882, lng: 26.1256145};
+
+        var map = new google.maps.Map(document.getElementById('map'), {
+          zoom: 12,
+          center: myLatLng
+        });
+
+
+//          $.ajax({
+//              url: "http://127.0.0.1:3000/getCentroids",
+//          }).done(function(data) {
+//              data = JSON.parse(data);
+//
+//              for (var parkKey in data) {
+//                  var myLatLng = {lat: parseFloat(data[parkKey][0]), lng: parseFloat(data[parkKey][1])};
+//                  var marker = new google.maps.Marker({
+//                      position: myLatLng,
+//                      map: map
+//                  });
+//              }
+//
+//          });
+
+          var lineSymbol = {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              strokeColor: '#393'
+          };
+
+//
+//            for (var key in coordinates) {
+//                var poly = coordinates[key];
+//
+//                var markers = [];
+//
+//                for (var coordinateKey in  poly) {
+//                    var coord = {
+//                        lat: parseFloat(poly[coordinateKey][1]),
+//                        lng: parseFloat(poly[coordinateKey][0])
+//                    };
+//                    markers.push(coord);
+//                }
+//
+//                var flightPath = new google.maps.Polygon({
+//                    paths: markers,
+//                    strokeColor: '#FF0000',
+//                    strokeOpacity: 0.2,
+//                    strokeWeight: 2,
+//                    fillColor: '#FF0000',
+//                    fillOpacity: 0.1
+//                });
+//                flightPath.setMap(map);
+//
+//            }
+
+
+
+          $.ajax({
+              url: "http://127.0.0.1:3000/getPolygons"
+          }).done(function(data) {
+              data = JSON.parse(data);
+              var sum = 0;
+
+              for (var areaKey in data) {
+                var coordinates = data[areaKey].coord;
+
+                  var markers = [];
+
+
+                    for (var coordinateKey in coordinates) {
+                        var lat = parseFloat(coordinates[coordinateKey].lat);
+                        var lon = parseFloat(coordinates[coordinateKey].lon);
+
+                        var coord = {
+                            lat: lat,
+                            lng: lon
+                        };
+                        markers.push(coord);
+                    }
+
+                  var flightPath = new google.maps.Polygon({
+                      paths: markers,
+                        strokeColor: '#FF0000',
+                        strokeOpacity: 0.8,
+                        strokeWeight: 2,
+                        fillColor: '#FF0000',
+                        fillOpacity: 0.35
+                    });
+
+                    flightPath.setMap(map);
+
+                      sum += calculateParkArea(markers, map);
+
+//                  var randomPoints = data[areaKey].randomPoints;
+//
+//                  var circles = [];
+//                  for (var elemKey in randomPoints) {
+//                      var coords = {
+//                          lat: parseFloat(randomPoints[elemKey].lat),
+//                          lng: parseFloat(randomPoints[elemKey].lon)
+//                      };
+////                      new google.maps.Marker({
+////                          position: coord,
+////                          map: map,
+////                          title: 'Hello World!'
+////                      });
+//
+//                      var circle = new google.maps.Circle({
+//                          strokeColor: '#FFFFFF',
+//                          strokeOpacity: 0.8,
+//                          strokeWeight: 2,
+//                          fillColor: '#FFFFFF',
+//                          fillOpacity: 0.35,
+//                          map: map,
+//                          center: coords,
+//                          radius: radius
+//                      });
+//                      circle.direction = getRandomDirection();
+//                      circle.coords = coords;
+//                      circles.push(circle);
+//                  }
+
+                  // movePeople(circles, 0, markers);
+              }
+
+              console.log('Sum', sum);
+//              calculateIntersections();
+
+//              console.log(minusMeters);
+//              uniquePointsCovered = uniquePointsCovered.length * area -  minusMeters;
+//              alert("Squares meters covered: " + uniquePointsCovered);
+
+          });
+      }
+    </script>
+    <script async defer
+    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCnkyImO_wRVIkDQb2AGbGwZqFJHoDyFXs&callback=initMap">
+    </script>
+  </body>
+</html>
